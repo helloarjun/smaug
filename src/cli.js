@@ -13,6 +13,7 @@
  */
 
 import { fetchAndPrepareBookmarks } from './processor.js';
+import { parseFetchArgs, positiveInteger } from './arguments.js';
 import { initConfig, loadConfig } from './config.js';
 import { execSync } from 'child_process';
 import fs from 'fs';
@@ -214,12 +215,8 @@ async function main() {
       // Parse --limit flag
       const limitIdx = args.findIndex(a => a === '--limit' || a === '-l');
       let limit = null;
-      if (limitIdx !== -1 && args[limitIdx + 1]) {
-        limit = parseInt(args[limitIdx + 1], 10);
-        if (isNaN(limit) || limit <= 0) {
-          console.error('Invalid --limit value. Must be a positive number.');
-          process.exit(1);
-        }
+      if (limitIdx !== -1) {
+        limit = positiveInteger(args[limitIdx + 1], '--limit');
       }
 
       try {
@@ -234,39 +231,7 @@ async function main() {
     }
 
     case 'fetch': {
-      const count = parseInt(args.find(a => a.match(/^\d+$/)) || '20', 10);
-      const specificIds = args.filter(a => a.match(/^\d{10,}$/));
-      const force = args.includes('--force') || args.includes('-f');
-      const includeMedia = args.includes('--media') || args.includes('-m');
-      const fetchAll = args.includes('--all') || args.includes('-a') || args.includes('-all');
-
-      // Parse --source flag
-      const sourceIdx = args.findIndex(a => a === '--source' || a === '-s');
-      let source = null;
-      if (sourceIdx !== -1 && args[sourceIdx + 1]) {
-        source = args[sourceIdx + 1];
-        if (!['bookmarks', 'likes', 'both'].includes(source)) {
-          console.error(`Invalid source: ${source}. Must be 'bookmarks', 'likes', or 'both'.`);
-          process.exit(1);
-        }
-      }
-
-      // Parse --max-pages flag
-      const maxPagesIdx = args.findIndex(a => a === '--max-pages');
-      let maxPages = null;
-      if (maxPagesIdx !== -1 && args[maxPagesIdx + 1]) {
-        maxPages = parseInt(args[maxPagesIdx + 1], 10);
-      }
-
-      const result = await fetchAndPrepareBookmarks({
-        count,
-        specificIds: specificIds.length > 0 ? specificIds : null,
-        force,
-        source,
-        includeMedia,
-        all: fetchAll,
-        maxPages
-      });
+      const result = await fetchAndPrepareBookmarks(parseFetchArgs(args.slice(1)));
 
       if (result.count > 0) {
         console.log(`\n✓ Prepared ${result.count} tweets.`);
@@ -313,6 +278,7 @@ async function main() {
       console.log('Smaug Status\n');
       console.log(`Archive:     ${config.archiveFile}`);
       console.log(`Source:      ${config.source || 'bookmarks'}`);
+      console.log(`AI calls:    ${config.aiEnabled === true ? 'enabled (check provider pricing)' : 'disabled; no model calls'}`);
       console.log(`Media:       ${config.includeMedia ? '✓ enabled (experimental)' : 'disabled (use --media to enable)'}`);
       console.log(`Twitter:     ${config.twitter?.authToken ? '✓ configured' : '✗ not configured'}`);
       console.log(`Auto-Claude: ${config.autoInvokeClaude ? 'enabled' : 'disabled'}`);
