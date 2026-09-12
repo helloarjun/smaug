@@ -9,7 +9,7 @@ This is the helloarjun fork. Local `origin` points to `helloarjun/smaug`;
 
 - Eight local archive commits were made during March 9–20, 2026.
 - The cleaned archive contains 102 unique primary Tweet IDs, including inherited
-  examples and personal additions. Four entries without a primary Tweet URL are
+  examples and personal additions. Two entries without a primary Tweet URL are
   retained without inventing an ID.
 - Cleanup consolidated 185 primary Tweet fields into 102: 83 repeated entries.
   Distinct older descriptions remain in expandable context sections. Every URL

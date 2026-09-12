@@ -1,5 +1,25 @@
 # Monday, March 9, 2026
 
+## @vponamariov - Ever noticed how your entire page shifts when you open a modal?
+> Ever noticed how your entire page shifts when you open a modal?
+
+That's not a bug, that's a missing CSS property. https://t.co/1l7rkCzY2A
+
+- **Tweet:** https://x.com/vponamariov/status/2030946457680069027
+- **Tags:**
+- **What:** Explanation of a common UI issue caused by missing CSS property
+
+<details>
+<summary>Additional saved context from earlier processing</summary>
+
+**Alternate saved heading:** @vponamariov - Missing CSS property causing page shift when opening modal
+> Ever noticed how your entire page shifts when you open a modal?
+
+- **Tags:**
+- **What:** Explanation of a CSS issue causing page shift when modals open.
+
+</details>
+
 ## @NathanpmYoung - Fashion Theory Observation
 > Notes on Tyler Alterman's fashion theory about status
 > DiscussingFilm's animation test post
@@ -461,8 +481,6 @@ Now I can Claude Code from bathroom. https://t.co/XZAPLyRF2i
 
 # Sunday, March 8, 2026
 
-DATE: Sunday, March 8, 2026
-
 ## @stevekrouse - API Key Alternative (x402 Protocol)
 > Reply about x402 - a new protocol for paid HTTP requests that eliminates API key requirements
 - **Tweet:** https://x.com/stevekrouse/status/2030679699832152218
@@ -548,28 +566,6 @@ in order to join, you have to fuck around and find out in increasingly bigger bi
 
 - **Tags:**
 - **What:** Observation on the changing aesthetic of Yemeni coffee shops in NYC.
-
-</details>
-
-DATE: Monday, March 9, 2026
-
-## @vponamariov - Ever noticed how your entire page shifts when you open a modal?
-> Ever noticed how your entire page shifts when you open a modal?
-
-That's not a bug, that's a missing CSS property. https://t.co/1l7rkCzY2A
-
-- **Tweet:** https://x.com/vponamariov/status/2030946457680069027
-- **Tags:**
-- **What:** Explanation of a common UI issue caused by missing CSS property
-
-<details>
-<summary>Additional saved context from earlier processing</summary>
-
-**Alternate saved heading:** @vponamariov - Missing CSS property causing page shift when opening modal
-> Ever noticed how your entire page shifts when you open a modal?
-
-- **Tags:**
-- **What:** Explanation of a CSS issue causing page shift when modals open.
 
 </details>
 
