@@ -320,8 +320,10 @@ async function notify(config, title, description, success = true) {
 
 export async function run(options = {}, dependencies = {}) {
   const startTime = Date.now();
+  let config;
+  const sendNotification = dependencies.notify || notify;
   try {
-    const config = dependencies.config || loadConfig(options.configPath);
+    config = dependencies.config || loadConfig(options.configPath);
     const result = await processQueue(config, options, {
       fetchBookmarks: dependencies.fetchBookmarks || (opts => prepareBookmarks({ ...opts, config })),
       invoke: dependencies.invoke || invokeAICLI
@@ -332,12 +334,15 @@ export async function run(options = {}, dependencies = {}) {
     if (options.trackTokens && result.tokenUsage) {
       console.log(`Tokens (${result.tokenUsage.model}): ${result.tokenUsage.input} input, ${result.tokenUsage.output} output`);
     }
-    if (!result.disabled && result.count > 0) {
-      await notify(config, 'Bookmark Processing', `${result.count} verified bookmarks archived; ${result.pendingCount} pending.`, result.success);
+    if (!result.success || result.error) {
+      await sendNotification(config, 'Bookmark Processing Failed', result.error || 'Processing failed', false);
+    } else if (!result.disabled && result.count > 0) {
+      await sendNotification(config, 'Bookmark Processing', `${result.count} verified bookmarks archived; ${result.pendingCount} pending.`, true);
     }
     return { ...result, duration: Date.now() - startTime };
   } catch (error) {
     console.error(`Smaug job failed: ${error.message}`);
+    if (config) await sendNotification(config, 'Smaug Job Failed', error.message, false);
     return { success: false, count: 0, error: error.message, duration: Date.now() - startTime };
   }
 }

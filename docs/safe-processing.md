@@ -4,6 +4,7 @@ AI processing is **off by default**, including for older configs that set
 `autoInvokeClaude: true`. `aiEnabled` must explicitly be `true` before a model
 can run. The current local Haiku configuration therefore does not cause calls.
 Fetches do not use an LLM. `node src/cli.js status` displays the cost gate.
+Scheduled runs continue fetching into a nonempty queue while AI is disabled.
 
 ## Current workflow
 
@@ -58,6 +59,12 @@ after the archive is saved but before queue acknowledgement, existing primary
 Tweet fields prevent reprocessing. A conflicting existing note is never replaced;
 its bookmark stays pending. A crash before archive commit can leave an orphan note;
 identical notes are reusable, while differing ones require inspection.
+
+Explicit `fetch --force` and selected-ID fetches persist a reprocessing token.
+Validated refreshes attach updated context to the existing entry and save optional
+notes under a token-specific filename. A receipt in the archive prevents repeating
+that refresh after a crash between saving the archive and acknowledging the queue.
+Zero-count failures still send configured failure notifications.
 
 These protections coordinate Smaug processes, not arbitrary external editors.
 Avoid editing archive files while a run is committing output. Keep regular backups;

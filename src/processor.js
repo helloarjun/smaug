@@ -18,6 +18,7 @@ import dayjs from 'dayjs';
 import utc from 'dayjs/plugin/utc.js';
 import timezone from 'dayjs/plugin/timezone.js';
 import { loadConfig } from './config.js';
+import { randomUUID } from 'node:crypto';
 import { readQueue, recoverQueue, withQueueLock, writeJsonAtomic } from './queue.js';
 
 dayjs.extend(utc);
@@ -562,7 +563,7 @@ export async function fetchAndPrepareBookmarks(options = {}) {
   return withQueueLock(config.pendingFile, () => prepareBookmarks({ ...options, config }));
 }
 
-export async function prepareBookmarks(options = {}) {
+export async function prepareBookmarks(options = {}, dependencies = {}) {
   const config = options.config || loadConfig(options.configPath);
   recoverQueue(config.pendingFile);
   const now = dayjs().tz(config.timezone || 'America/New_York');
@@ -590,7 +591,7 @@ export async function prepareBookmarks(options = {}) {
   } else {
     // Normal fetch from source
     console.log(`Fetching from source: ${source}${includeMedia ? ' (with media)' : ''}${fetchOptions.all ? ' (paginated)' : ''}`);
-    tweets = fetchFromSource(configWithOptions, count, fetchOptions);
+    tweets = (dependencies.fetchFromSource || fetchFromSource)(configWithOptions, count, fetchOptions);
   }
 
   if (!tweets || tweets.length === 0) {
@@ -865,12 +866,16 @@ export async function prepareBookmarks(options = {}) {
   // Merge prepared bookmarks into pending file
   const existingPending = readQueue(config.pendingFile);
 
+  if (options.force || options.specificIds?.length) {
+    for (const bookmark of prepared) bookmark.reprocessToken = randomUUID();
+  }
+
   const existingPendingIds = new Set(existingPending.bookmarks.map(b => String(b.id)));
   const newBookmarks = prepared.filter(b => !existingPendingIds.has(String(b.id)));
 
   // Merge and sort by createdAt ascending (oldest first)
   // This ensures when processed, oldest get added first, newest end up on top
-  const allBookmarks = [...existingPending.bookmarks, ...newBookmarks];
+  const allBookmarks = [...new Map([...existingPending.bookmarks, ...prepared].map(b => [String(b.id), b])).values()];
   allBookmarks.sort((a, b) => {
     const dateA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
     const dateB = b.createdAt ? new Date(b.createdAt).getTime() : 0;

@@ -6,7 +6,7 @@ import path from 'node:path';
 import { EventEmitter } from 'node:events';
 import { processQueue, archivedIds, mergeArchive } from '../src/pipeline.js';
 import { recoverQueue, readQueue, writeJsonAtomic, withQueueLock } from '../src/queue.js';
-import { fetchBookmarks } from '../src/processor.js';
+import { fetchBookmarks, prepareBookmarks } from '../src/processor.js';
 import { parseFetchArgs } from '../src/arguments.js';
 import { loadConfig } from '../src/config.js';
 import { getCLISettings, invokeAICLI, run } from '../src/job.js';
@@ -37,8 +37,10 @@ test('cost gate prevents any invocation and preserves the queue', async t => {
   const { config } = fixture(t);
   config.aiEnabled = false;
   const before = fs.readFileSync(config.pendingFile, 'utf8');
-  const result = await processQueue(config, {}, { fetchBookmarks: noFetch, invoke: noFetch });
+  let fetched = false;
+  const result = await processQueue(config, {}, { fetchBookmarks: async () => { fetched = true; }, invoke: noFetch });
   assert.equal(result.disabled, true);
+  assert.equal(fetched, true);
   assert.equal(fs.readFileSync(config.pendingFile, 'utf8'), before);
 });
 
@@ -219,7 +221,7 @@ test('max-pages is not confused with positional count', () => {
 test('runner uses injected AI in isolation and enforces cost gate', async t => {
   const { config } = fixture(t, 1);
   config.aiEnabled = false;
-  const result = await run({}, { config, fetchBookmarks: noFetch, invoke: noFetch });
+  const result = await run({}, { config, fetchBookmarks: async () => {}, invoke: noFetch });
   assert.equal(result.disabled, true);
 });
 
@@ -254,6 +256,59 @@ function fakeChild() {
   return child;
 }
 const fakeSettings = { binary: 'mock-only', args: [], env: {}, stdin: 'ignore', shell: false, model: 'mock' };
+
+test('disabled processing continues merging new fetches into a nonempty queue', async t => {
+  const { config } = fixture(t, 1);
+  config.aiEnabled = false;
+  const result = await processQueue(config, {}, { invoke: noFetch, fetchBookmarks: async () => {
+    const pending = readQueue(config.pendingFile);
+    pending.bookmarks.push({ id: '200', tweetUrl: 'https://x.com/user/status/200' });
+    writeJsonAtomic(config.pendingFile, pending);
+  } });
+  assert.equal(result.disabled, true);
+  assert.equal(result.pendingCount, 2);
+});
+
+test('fetch --force preserves reprocessing intent through run and crash recovery', async t => {
+  const { config, bookmarks, root } = fixture(t, 1);
+  config.stateFile = path.join(root, 'state.json');
+  fs.writeFileSync(config.archiveFile, entry(bookmarks[0]).markdown);
+  await prepareBookmarks({ config, force: true }, { fetchFromSource: () => [{ ...bookmarks[0], author: { username: 'user' }, text: 'Saved tweet' }] });
+  const forcedQueue = readQueue(config.pendingFile);
+  assert.ok(forcedQueue.bookmarks[0].reprocessToken);
+  let calls = 0;
+  const result = await processQueue(config, {}, { fetchBookmarks: noFetch, invoke: async cfg => { calls++; return model()(cfg); } });
+  assert.equal(result.success, true);
+  assert.equal(calls, 1);
+  const archive = fs.readFileSync(config.archiveFile, 'utf8');
+  assert.equal((archive.match(/\*\*Tweet:\*\*/g) || []).length, 1);
+  assert.match(archive, /Reprocessed bookmark/);
+  writeJsonAtomic(config.pendingFile, forcedQueue); // Crash before acknowledgement.
+  const retry = await processQueue(config, {}, { fetchBookmarks: noFetch, invoke: noFetch });
+  assert.equal(retry.count, 0);
+  assert.equal(readQueue(config.pendingFile).count, 0);
+});
+
+test('zero-count child failures send a failure notification', async t => {
+  const { config } = fixture(t, 1);
+  const notices = [];
+  const result = await run({}, { config, fetchBookmarks: noFetch,
+    invoke: async () => ({ success: false, error: 'Provider failed' }), notify: async (...args) => notices.push(args) });
+  assert.equal(result.count, 0);
+  assert.equal(notices.length, 1);
+  assert.equal(notices[0][3], false);
+  assert.match(notices[0][2], /Provider failed/);
+});
+
+test('caught queue errors also send a failure notification', async t => {
+  const { config } = fixture(t, 1);
+  fs.writeFileSync(config.pendingFile, '{broken');
+  const notices = [];
+  const result = await run({}, { config, fetchBookmarks: noFetch, invoke: noFetch, notify: async (...args) => notices.push(args) });
+  assert.equal(result.success, false);
+  assert.equal(notices.length, 1);
+  assert.equal(notices[0][3], false);
+});
 
 test('AI error result without trailing newline fails even on exit zero', async () => {
   const child = fakeChild();

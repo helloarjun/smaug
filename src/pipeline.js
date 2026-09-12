@@ -4,8 +4,10 @@ import { readQueue, recoverQueue, withQueueLock, writeAtomic, writeJsonAtomic } 
 
 // Only primary Tweet fields count: quoted/parent links do not acknowledge a bookmark.
 export function archivedIds(text) {
-  return new Set([...text.matchAll(/^- \*\*Tweet:\*\*\s+(?:https?:\/\/)?(?:www\.)?(?:x|twitter)\.com\/\w+\/status\/(\d+)\b/gm)].map(m => m[1]));
+  return new Set([...text.matchAll(/^[ \t]*- \*\*Tweet:\*\*[ \t]+(?:https?:\/\/)?(?:www\.)?(?:x|twitter)\.com\/\w+\/status\/(\d+)\b/gm)].map(m => m[1]));
 }
+
+const receipt = bookmark => `<!-- smaug-reprocess:${bookmark.id}:${bookmark.reprocessToken} -->`;
 
 function archiveText(file) {
   try { return fs.readFileSync(file, 'utf8'); }
@@ -49,20 +51,21 @@ export async function processQueue(config, options, { fetchBookmarks, invoke }) 
   if (!Number.isSafeInteger(limit) || limit < 1) throw new Error('limit must be a positive integer');
   return withQueueLock(config.pendingFile, async () => {
     let pending = recoverQueue(config.pendingFile);
-    if (!pending.bookmarks.length || options.forceFetch) {
+    const automatic = config.cliTool === 'opencode' ? config.autoInvokeOpencode : config.autoInvokeClaude;
+    const disabled = config.aiEnabled !== true || automatic === false;
+    if (disabled || !pending.bookmarks.length || options.forceFetch) {
       await fetchBookmarks(options);
       pending = readQueue(config.pendingFile);
     }
-    if (config.aiEnabled !== true) {
+    if (disabled) {
       return { success: true, count: 0, pendingCount: pending.count, disabled: true };
     }
-    const automatic = config.cliTool === 'opencode' ? config.autoInvokeOpencode : config.autoInvokeClaude;
-    if (automatic === false) return { success: true, count: 0, pendingCount: pending.count, disabled: true };
 
     const original = archiveText(config.archiveFile);
     const existing = archivedIds(original);
     // Recover a crash after archive commit but before queue acknowledgement.
-    pending.bookmarks = pending.bookmarks.filter(b => !existing.has(String(b.id)));
+    pending.bookmarks = pending.bookmarks.filter(b => b.reprocessToken
+      ? !original.includes(receipt(b)) : !existing.has(String(b.id)));
     pending.count = pending.bookmarks.length;
     writeJsonAtomic(config.pendingFile, pending);
     const batch = pending.bookmarks.slice(0, limit);
@@ -93,7 +96,9 @@ export async function processQueue(config, options, { fetchBookmarks, invoke }) 
       if (entry.note != null) {
         const category = config.categories?.[entry.note.category];
         if (!category?.folder || typeof entry.note.markdown !== 'string' || !entry.note.markdown.trim()) continue;
-        const noteFile = path.resolve(category.folder, `${id}.md`);
+        const bookmark = batch.find(b => String(b.id) === id);
+        const suffix = bookmark.reprocessToken ? `-${bookmark.reprocessToken}` : '';
+        const noteFile = path.resolve(category.folder, `${id}${suffix}.md`);
         const oldNote = archiveText(noteFile);
         if (oldNote && oldNote !== entry.note.markdown) continue;
         writeAtomic(noteFile, entry.note.markdown);
@@ -107,7 +112,26 @@ export async function processQueue(config, options, { fetchBookmarks, invoke }) 
     // Detect unexpected writes by another process before replacing the archive.
     if (archiveText(config.archiveFile) !== original) throw new Error('Archive changed during processing; batch retained and queue preserved');
     if (accepted.size) {
-      writeAtomic(config.archiveFile, mergeArchive(original, batch, accepted, config.timezone));
+      let archive = original;
+      const additions = new Map(accepted);
+      for (const bookmark of batch) {
+        const id = String(bookmark.id);
+        if (!bookmark.reprocessToken || !accepted.has(id)) continue;
+        const marker = receipt(bookmark);
+        if (existing.has(id)) {
+          // Keep the old context and attach the refresh to its primary Tweet field.
+          const primary = new RegExp(`^[ \\t]*- \\*\\*Tweet:\\*\\*[^\\n]*\\/status\\/${id}\\b[^\\n]*`, 'm');
+          const match = primary.exec(archive);
+          if (!match) throw new Error(`Cannot locate archived bookmark ${id} for refresh`);
+          const refreshed = accepted.get(id).replace(/^## @.*\n?/m, '').replace(/^[ \t]*- \*\*Tweet:\*\*.*\n?/gm, '').trim();
+          const at = match.index + match[0].length;
+          archive = archive.slice(0, at) + `\n\n<details>\n<summary>Reprocessed bookmark</summary>\n\n${refreshed}\n\n${marker}\n</details>\n` + archive.slice(at);
+          additions.delete(id);
+        } else {
+          additions.set(id, `${accepted.get(id)}\n\n${marker}`);
+        }
+      }
+      writeAtomic(config.archiveFile, mergeArchive(archive, batch, additions, config.timezone));
       pending.bookmarks = pending.bookmarks.filter(b => !accepted.has(String(b.id)));
       pending.count = pending.bookmarks.length;
       writeJsonAtomic(config.pendingFile, pending);

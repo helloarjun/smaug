@@ -23,6 +23,9 @@ export function readQueue(file) {
   if (!Array.isArray(data.bookmarks) || data.bookmarks.some(b => !b || !/^\d+$/.test(String(b.id)))) {
     throw new Error(`Invalid bookmark queue: ${file}. File preserved; repair it before retrying.`);
   }
+  if (data.bookmarks.some(b => b.reprocessToken != null && !/^[0-9a-f-]{36}$/.test(b.reprocessToken))) {
+    throw new Error(`Invalid reprocessing marker in ${file}`);
+  }
   return { ...data, count: data.bookmarks.length };
 }
 
