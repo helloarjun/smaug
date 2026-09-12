@@ -551,8 +551,8 @@ in order to join, you have to fuck around and find out in increasingly bigger bi
 
 </details>
 
-## @AsadFromNYC - Does anyone else feel that the newer Yemeni coffee shops have a UAE aesthetic to them? A sleek, minimalist look with bright lights, no cultural branding, zero ornamentation, and Instagrammability over taste? While the older ones lean more into cultural heritage, traditional craft, and slow brewing? This is a very hyper-local niche question but is anyone talking about the Emiratification of NYC Yemeni coffee shops?
-> Does anyone else feel that the newer Yemeni coffee shops have a UAE aesthetic to them? A sleek, minimalist look with bright lights, no cultural branding, zero ornamentation, and Instagrammability over taste? While the older ones lean more into cultural heritage, traditional craft, and slow brewing? This is a very hyper-local niche question but is anyone talking about the Emiratification of NYC Yemeni coffee shops?
+## @AsadFromNYC - Does anyone else feel that the newer Yemeni coffee shops have a “UAE aesthetic” to them? A sleek, minimalist look with bright lights, no cultural branding, zero ornamentation, and Instagrammability over taste? While the older ones lean more into cultural heritage, traditional craft, and slow brewing? This is a very hyper-local niche question but is anyone talking about the Emiratification of NYC Yemeni coffee shops?
+> Does anyone else feel that the newer Yemeni coffee shops have a “UAE aesthetic” to them? A sleek, minimalist look with bright lights, no cultural branding, zero ornamentation, and Instagrammability over taste? While the older ones lean more into cultural heritage, traditional craft, and slow brewing? This is a very hyper-local niche question but is anyone talking about the Emiratification of NYC Yemeni coffee shops?
 
 - **Tweet:** https://x.com/AsadFromNYC/status/2030882550369956000
 - **Tags:**
