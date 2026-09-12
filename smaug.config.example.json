@@ -2,7 +2,7 @@
   "archiveFile": "./bookmarks.md",
   "pendingFile": "./.state/pending-bookmarks.json",
   "stateFile": "./.state/bookmarks-state.json",
-  "parallelThreshold": 8,
+  "aiEnabled": false,
   "timezone": "UTC",
   "twitter": {
     "authToken": "YOUR_AUTH_TOKEN_HERE",
@@ -11,6 +11,6 @@
   "autoInvokeClaude": true,
   "claudeModel": "sonnet",
   "autoInvokeOpencode": true,
-  "opencodeModel": "opencode/glm-4.7-free",
+  "opencodeModel": null,
   "cliTool": "claude"
 }

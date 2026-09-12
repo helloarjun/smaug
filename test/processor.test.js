@@ -4,7 +4,13 @@ import fs from 'fs';
 import path from 'path';
 import { execSync } from 'child_process';
 import { fileURLToPath } from 'url';
-import { isPaywalled, stripQuerystring, fetchXArticleContent } from '../src/processor.js';
+import { isPaywalled, stripQuerystring, fetchXArticleContent as fetchRealXArticleContent } from '../src/processor.js';
+
+// Unit tests never invoke Bird or the network. Live integration is explicitly opt-in.
+const fetchXArticleContent = (url, config, tweetId) => fetchRealXArticleContent(url, config, tweetId, {
+  execSync: () => { throw new Error('Mock Bird unavailable'); },
+  fetch: async () => new Response('<title>Fixture article</title>')
+});
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -19,7 +25,7 @@ function hasBirdCredentials() {
   }
 }
 
-const BIRD_AVAILABLE = hasBirdCredentials();
+const BIRD_AVAILABLE = process.env.SMAUG_LIVE_TESTS === '1' && hasBirdCredentials();
 
 describe('X article URL detection', () => {
   test('detects X article URL pattern', () => {
@@ -593,7 +599,7 @@ describe('X article integration tests (requires bird credentials)', { skip: !BIR
     // This is João Moura's "Lessons From 2 Billion Agentic Workflows" article
     const articleUrl = 'https://x.com/i/article/1882784553200713866';
 
-    const result = await fetchXArticleContent(articleUrl, {}, null);
+    const result = await fetchRealXArticleContent(articleUrl, {}, null);
 
     // Should return article structure even if content extraction varies
     assert.ok(result.articleId, 'should have articleId');
@@ -614,7 +620,7 @@ describe('X article integration tests (requires bird credentials)', { skip: !BIR
     // Use a fake article ID that doesn't exist
     const fakeArticleUrl = 'https://x.com/i/article/9999999999999999999';
 
-    const result = await fetchXArticleContent(fakeArticleUrl, {}, null);
+    const result = await fetchRealXArticleContent(fakeArticleUrl, {}, null);
 
     // Should return structure without failing
     assert.ok(result.articleId, 'should have articleId');

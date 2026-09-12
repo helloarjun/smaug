@@ -1,5 +1,12 @@
 # Smaug 🐉
 
+**Processing safety update:** AI calls are disabled by default (`aiEnabled: false`),
+including with older Haiku configs. Batches default to five bookmarks; Node validates
+and saves staged model output before clearing queue entries. The older agent/subagent
+workflow below is superseded for automated runs. Start with the
+[safe processing and recovery guide](docs/safe-processing.md), including free-model
+configuration and the explicit cost gate.
+
 Archive your Twitter/X bookmarks (and/or optionally, likes) to markdown. Automatically.
 
 *Like a dragon hoarding treasure, Smaug collects the valuable things you bookmark and like.*

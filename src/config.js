@@ -114,6 +114,9 @@ const DEFAULT_CONFIG = {
 
   // ---- Automation settings (for scheduled jobs) ----
 
+  // Explicit cost gate. Existing configs must opt in before any model can run.
+  aiEnabled: false,
+
   // Auto-invoke Claude Code after fetching bookmarks
   autoInvokeClaude: true,
 
@@ -127,7 +130,7 @@ const DEFAULT_CONFIG = {
   claudeModel: 'sonnet',
 
   // OpenCode model to use (any OpenCode-compatible model)
-  opencodeModel: 'opencode/glm-4.7-free',
+  opencodeModel: null,
 
   // Claude invocation timeout in ms (default 15 min)
   claudeTimeout: 900000,
@@ -270,11 +273,17 @@ export function loadConfig(configPath) {
   config.birdPath = expandTilde(config.birdPath);
   config.projectRoot = expandTilde(config.projectRoot);
 
+  const root = path.resolve(config.projectRoot || process.cwd());
+  config.projectRoot = root;
+  for (const key of ['archiveFile', 'pendingFile', 'stateFile']) {
+    config[key] = path.resolve(root, config[key]);
+  }
+
   // Expand ~ in category folders
   if (config.categories) {
     for (const key of Object.keys(config.categories)) {
       if (config.categories[key]?.folder) {
-        config.categories[key].folder = expandTilde(config.categories[key].folder);
+        config.categories[key] = { ...config.categories[key], folder: path.resolve(root, expandTilde(config.categories[key].folder)) };
       }
     }
   }

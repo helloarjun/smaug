@@ -10,7 +10,7 @@
  * Outputs a JSON bundle for AI analysis (Claude Code, etc.)
  */
 
-import { execSync, spawn } from 'child_process';
+import { execSync, execFileSync, spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
@@ -18,6 +18,8 @@ import dayjs from 'dayjs';
 import utc from 'dayjs/plugin/utc.js';
 import timezone from 'dayjs/plugin/timezone.js';
 import { loadConfig } from './config.js';
+import { randomUUID } from 'node:crypto';
+import { readQueue, recoverQueue, withQueueLock, writeJsonAtomic } from './queue.js';
 
 dayjs.extend(utc);
 dayjs.extend(timezone);
@@ -26,13 +28,13 @@ dayjs.extend(timezone);
  * Search for the original tweet that published an X article.
  * Used when bookmarked tweet is a share, not the original.
  */
-function searchForArticleTweet(articleId, config) {
+function searchForArticleTweet(articleId, config, dependencies = {}) {
   try {
     const env = buildBirdEnv(config);
     const birdCmd = config.birdPath || 'bird';
     // articleId is validated as digits-only by caller's regex
     const searchQuery = `url:x.com/i/article/${articleId}`;
-    const output = execSync(`${birdCmd} search "${searchQuery}" -n 5 --json`, {
+    const output = (dependencies.execSync || execSync)(`${birdCmd} search "${searchQuery}" -n 5 --json`, {
       encoding: 'utf8',
       timeout: 30000,
       env
@@ -61,7 +63,8 @@ function searchForArticleTweet(articleId, config) {
  * Direct HTTP fetch won't work - X articles are JS-rendered SPAs that require
  * the Twitter API (via bird CLI) to get the actual content.
  */
-export async function fetchXArticleContent(articleUrl, config, sourceTweetId = null) {
+export async function fetchXArticleContent(articleUrl, config, sourceTweetId = null, dependencies = {}) {
+  const runBird = dependencies.execSync || execSync;
   const articleIdMatch = articleUrl.match(/\/i\/article\/(\d+)/);
   if (!articleIdMatch) {
     return { error: 'Could not parse X article URL', source: 'x-article' };
@@ -121,7 +124,7 @@ export async function fetchXArticleContent(articleUrl, config, sourceTweetId = n
   // Try the bookmarked tweet first - fastest path when it contains the article directly
   if (sourceTweetId) {
     try {
-      const output = execSync(`${birdCmd} read ${sourceTweetId} --json`, {
+      const output = runBird(`${birdCmd} read ${sourceTweetId} --json`, {
         encoding: 'utf8',
         timeout: 30000,
         env
@@ -137,7 +140,7 @@ export async function fetchXArticleContent(articleUrl, config, sourceTweetId = n
   }
 
   // Bookmarked tweet was a share/retweet - search for the original article tweet
-  const originalTweet = searchForArticleTweet(articleId, config);
+  const originalTweet = searchForArticleTweet(articleId, config, dependencies);
   if (originalTweet) {
     // Use search result directly if it has full content (avoids extra API call)
     const searchContent = originalTweet.text || originalTweet.quotedTweet?.text || '';
@@ -152,7 +155,7 @@ export async function fetchXArticleContent(articleUrl, config, sourceTweetId = n
     // Search result truncated - need full tweet data
     try {
       console.log(`  Found original article tweet: ${originalTweet.id}, fetching full content...`);
-      const output = execSync(`${birdCmd} read ${originalTweet.id} --json`, {
+      const output = runBird(`${birdCmd} read ${originalTweet.id} --json`, {
         encoding: 'utf8',
         timeout: 30000,
         env
@@ -173,18 +176,13 @@ export async function fetchXArticleContent(articleUrl, config, sourceTweetId = n
 
   // Last resort: scrape meta tags (can't get full content - X articles require JS to render)
   try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 15000);
-    
-    const response = await fetch(articleUrl, {
+    const response = await (dependencies.fetch || fetch)(articleUrl, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'
       },
-      signal: controller.signal,
+      signal: AbortSignal.timeout(15000),
       redirect: 'follow'
     });
-    clearTimeout(timeout);
-    
     const html = await response.text();
     const titleMatch = html.match(/<title>([^<]+)<\/title>/i);
     const descMatch = html.match(/<meta[^>]*name=["']description["'][^>]*content=["']([^"']+)["']/i) ||
@@ -264,56 +262,39 @@ function buildBirdEnv(config) {
   return env;
 }
 
-export function fetchBookmarks(config, count = 10, options = {}) {
+export function fetchBookmarks(config, count = 10, options = {}, dependencies = {}) {
+  if (!Number.isSafeInteger(count) || count < 1) throw new Error('count must be a positive integer');
+  if (options.maxPages != null && (!Number.isSafeInteger(options.maxPages) || options.maxPages < 1)) {
+    throw new Error('maxPages must be a positive integer');
+  }
+  const useAll = options.all || count > 50;
+  const args = ['bookmarks'];
+  if (options.folderId) args.push('--folder-id', String(options.folderId));
+  if (useAll) args.push('--all', '--max-pages', String(options.maxPages || Math.max(Math.ceil(count / 20), 10)));
+  else args.push('-n', String(count));
+  args.push('--json');
+  const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'smaug-bookmarks-'));
+  const file = path.join(temporary, 'bookmarks.json');
+  let fd;
   try {
-    const env = buildBirdEnv(config);
-    const birdCmd = config.birdPath || 'bird';
-
-    // Use --all for large fetches (> 50) or when explicitly requested
-    const useAll = options.all || count > 50;
-    const folderId = options.folderId;
-
-    let cmd;
-    if (useAll) {
-      // Paginated fetch - use longer timeout
-      // Calculate maxPages from count (bird returns ~20 per page, use 25 as buffer)
-      const estimatedPagesNeeded = Math.ceil(count / 20);
-      const maxPages = options.maxPages || Math.max(estimatedPagesNeeded, 10);
-      cmd = folderId
-        ? `${birdCmd} bookmarks --folder-id ${folderId} --all --max-pages ${maxPages} --json`
-        : `${birdCmd} bookmarks --all --max-pages ${maxPages} --json`;
-    } else {
-      cmd = folderId
-        ? `${birdCmd} bookmarks --folder-id ${folderId} -n ${count} --json`
-        : `${birdCmd} bookmarks -n ${count} --json`;
-    }
-
-    console.log(`  Running: ${cmd.replace(/--json/, '').trim()}`);
-
-    // Use temp file to work around bird CLI pipe buffering bug
-    const tmpFile = path.join(os.tmpdir(), `smaug-bookmarks-${Date.now()}.json`);
-    execSync(`${cmd} > "${tmpFile}"`, {
-      timeout: useAll ? 180000 : 60000, // 3 min for --all, 60s otherwise
-      env,
-      shell: true
+    // A file descriptor avoids Bird's pipe buffering issue without invoking a shell.
+    fd = fs.openSync(file, 'wx', 0o600);
+    (dependencies.execFileSync || execFileSync)(config.birdPath || 'bird', args, {
+      timeout: useAll ? 180000 : 60000,
+      env: buildBirdEnv(config),
+      stdio: ['ignore', fd, 'pipe']
     });
-    const output = fs.readFileSync(tmpFile, 'utf8');
-    fs.unlinkSync(tmpFile);
-    const parsed = JSON.parse(output);
-    // bird CLI v0.6.0+ returns { tweets: [...], nextCursor: ... } for paginated requests
-    // but plain arrays for non-paginated. Handle both formats.
-    let bookmarks = Array.isArray(parsed) ? parsed : (parsed.tweets || []);
-
-    // Respect the count parameter - truncate if we fetched more than requested
-    // (paginated mode may return more bookmarks than asked for)
-    if (bookmarks.length > count) {
-      console.log(`  Fetched ${bookmarks.length} bookmarks, limiting to requested ${count}`);
-      bookmarks = bookmarks.slice(0, count);
-    }
-
-    return bookmarks;
+    fs.closeSync(fd);
+    fd = undefined;
+    const parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
+    const bookmarks = Array.isArray(parsed) ? parsed : parsed.tweets;
+    if (!Array.isArray(bookmarks)) throw new Error('Bird returned an invalid bookmarks response');
+    return options.all ? bookmarks : bookmarks.slice(0, count);
   } catch (error) {
     throw new Error(`Failed to fetch bookmarks: ${error.message}`);
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
+    fs.rmSync(temporary, { recursive: true, force: true });
   }
 }
 
@@ -569,15 +550,22 @@ export async function fetchContent(url, type, config) {
 export function getExistingBookmarkIds(config) {
   try {
     const content = fs.readFileSync(config.archiveFile, 'utf8');
-    const matches = content.matchAll(/x\.com\/\w+\/status\/(\d+)/g);
+    const matches = content.matchAll(/^- \*\*Tweet:\*\*\s+https?:\/\/(?:www\.)?(?:x|twitter)\.com\/\w+\/status\/(\d+)\b/gm);
     return new Set([...matches].map(m => m[1]));
-  } catch {
-    return new Set();
+  } catch (error) {
+    if (error.code === 'ENOENT') return new Set();
+    throw error;
   }
 }
 
 export async function fetchAndPrepareBookmarks(options = {}) {
   const config = loadConfig(options.configPath);
+  return withQueueLock(config.pendingFile, () => prepareBookmarks({ ...options, config }));
+}
+
+export async function prepareBookmarks(options = {}, dependencies = {}) {
+  const config = options.config || loadConfig(options.configPath);
+  recoverQueue(config.pendingFile);
   const now = dayjs().tz(config.timezone || 'America/New_York');
   console.log(`[${now.format()}] Fetching and preparing bookmarks...`);
 
@@ -589,7 +577,7 @@ export async function fetchAndPrepareBookmarks(options = {}) {
 
   // Build fetch options for pagination
   const fetchOptions = {
-    all: options.all || count > 50,
+    all: options.all,
     maxPages: options.maxPages
   };
 
@@ -603,7 +591,7 @@ export async function fetchAndPrepareBookmarks(options = {}) {
   } else {
     // Normal fetch from source
     console.log(`Fetching from source: ${source}${includeMedia ? ' (with media)' : ''}${fetchOptions.all ? ' (paginated)' : ''}`);
-    tweets = fetchFromSource(configWithOptions, count, fetchOptions);
+    tweets = (dependencies.fetchFromSource || fetchFromSource)(configWithOptions, count, fetchOptions);
   }
 
   if (!tweets || tweets.length === 0) {
@@ -613,13 +601,7 @@ export async function fetchAndPrepareBookmarks(options = {}) {
 
   // Get IDs already processed or pending
   const existingIds = getExistingBookmarkIds(config);
-  let pendingIds = new Set();
-  try {
-    if (fs.existsSync(config.pendingFile)) {
-      const pending = JSON.parse(fs.readFileSync(config.pendingFile, 'utf8'));
-      pendingIds = new Set((pending.bookmarks || []).map(b => b.id.toString()));
-    }
-  } catch (e) {}
+  const pendingIds = new Set(readQueue(config.pendingFile).bookmarks.map(b => String(b.id)));
 
   // Determine which tweets to process
   let toProcess;
@@ -882,20 +864,18 @@ export async function fetchAndPrepareBookmarks(options = {}) {
   }
 
   // Merge prepared bookmarks into pending file
-  let existingPending = { bookmarks: [] };
-  try {
-    if (fs.existsSync(config.pendingFile)) {
-      const parsed = JSON.parse(fs.readFileSync(config.pendingFile, 'utf8'));
-      existingPending = { bookmarks: parsed.bookmarks || [], ...parsed };
-    }
-  } catch (e) {}
+  const existingPending = readQueue(config.pendingFile);
 
-  const existingPendingIds = new Set(existingPending.bookmarks.map(b => b.id));
-  const newBookmarks = prepared.filter(b => !existingPendingIds.has(b.id));
+  if (options.force || options.specificIds?.length) {
+    for (const bookmark of prepared) bookmark.reprocessToken = randomUUID();
+  }
+
+  const existingPendingIds = new Set(existingPending.bookmarks.map(b => String(b.id)));
+  const newBookmarks = prepared.filter(b => !existingPendingIds.has(String(b.id)));
 
   // Merge and sort by createdAt ascending (oldest first)
   // This ensures when processed, oldest get added first, newest end up on top
-  const allBookmarks = [...existingPending.bookmarks, ...newBookmarks];
+  const allBookmarks = [...new Map([...existingPending.bookmarks, ...prepared].map(b => [String(b.id), b])).values()];
   allBookmarks.sort((a, b) => {
     const dateA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
     const dateB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
@@ -912,7 +892,7 @@ export async function fetchAndPrepareBookmarks(options = {}) {
   if (!fs.existsSync(pendingDir)) {
     fs.mkdirSync(pendingDir, { recursive: true });
   }
-  fs.writeFileSync(config.pendingFile, JSON.stringify(output, null, 2));
+  writeJsonAtomic(config.pendingFile, output);
   console.log(`\nMerged ${newBookmarks.length} new bookmarks into ${config.pendingFile} (total: ${output.count})`);
 
   // Update state
